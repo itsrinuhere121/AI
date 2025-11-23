@@ -3,28 +3,28 @@ import os
 import httpx
 import asyncio
 import json
-from typing import List, Dict, Any
+from typing import List, Dict
 from pathlib import Path
-from model.ChatRequest import ChatRequest, QueryRequest
+from model.ChatRequest import QueryRequest
 load_dotenv()
 
 APPLICATION_MODEL = os.getenv("APPLICATION_MODEL", "ai/qwen3:0.6B-Q4_0")
 LLAMA_API_URL = os.getenv("LLAMA_API_URL", "http://localhost:12434/engines/llama.cpp/v1/chat/completions")
 
 
-# Simple in-memory context manager for conversation history per user
 class ContextManager:
     def __init__(self, storage_path: str | None = None):
-        # user_id -> list[{"role": str, "content": str}]
         self._histories: Dict[str, List[Dict[str, str]]] = {}
-        # user_id -> asyncio.Lock for concurrent access safety
         self._locks: Dict[str, asyncio.Lock] = {}
-        # configuration
-        self.HISTORY_MAX_CHARS = 6000  # approximate window
-        self.SUMMARIZE_THRESHOLD = 4000  # when to trigger summarization of older messages
+        self.HISTORY_MAX_CHARS = 6000
+        self.SUMMARIZE_THRESHOLD = 4000
 
         # persistence
-        self.storage_path = Path(storage_path or os.getenv("CONTEXT_STORAGE_PATH", "data/context.json"))
+        self.storage_path = Path(
+            storage_path or os.getenv(
+                "CONTEXT_STORAGE_PATH", "data/context.json"
+            )
+        )
         self._ensure_storage_dir()
         # load existing histories (best-effort)
         try:
@@ -50,19 +50,19 @@ class ContextManager:
         async with lock:
             hist = self.get_history(user_id)
             hist.append({"role": role, "content": content})
-            # persist after appending
             await self._save_to_disk_async()
 
     def _history_size(self, history: List[Dict[str, str]]) -> int:
         return sum(len(m.get("content", "")) for m in history)
 
-    def slice_for_context(self, history: List[Dict[str, str]], max_chars: int) -> List[Dict[str, str]]:
+    def slice_for_context(
+            self, history: List[Dict[str, str]], max_chars: int
+    ) -> List[Dict[str, str]]:
         """
         Return the most recent messages that fit into max_chars (approximation).
         """
         out: List[Dict[str, str]] = []
         total = 0
-        # iterate backwards and collect until limit
         for m in reversed(history):
             c = len(m.get("content", ""))
             if total + c > max_chars and out:
@@ -70,6 +70,7 @@ class ContextManager:
             out.insert(0, m)
             total += c
         return out
+
 
     async def ensure_summary(self, user_id: str):
         """
@@ -82,10 +83,11 @@ class ContextManager:
             size = self._history_size(history)
             if size < self.SUMMARIZE_THRESHOLD:
                 return
+            
+            recent_window = self.slice_for_context(
+                history, int(self.HISTORY_MAX_CHARS * 0.4)
+            )
 
-            # select older messages to summarize (everything except the latest window)
-            recent_window = self.slice_for_context(history, int(self.HISTORY_MAX_CHARS * 0.4))
-            # messages_to_summarize = history up to the start of recent_window
             idx = max(0, len(history) - len(recent_window))
             to_summarize = history[:idx]
             if not to_summarize:
@@ -109,7 +111,11 @@ class ContextManager:
                         {"role": "user", "content": summary_prompt}
                     ]
                 }
-                resp = await client.post(LLAMA_API_URL, json=req_json, headers={"Content-Type": "application/json"})
+                resp = await client.post(
+                    LLAMA_API_URL, json=req_json, headers={
+                        "Content-Type": "application/json"
+                    }
+                )
                 resp.raise_for_status()
                 resp_json = resp.json()
 
